@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { createRoomDoc, type RoomDoc } from '@/lib/ydoc';
 import { setAwarenessUser } from '@/lib/awareness';
@@ -53,9 +53,10 @@ export default function EditorPage() {
         document.documentElement.setAttribute('data-theme', theme);
         localStorage.setItem('cs_theme', theme);
     }, [theme]);
-    const { collaborators, metrics, updateCursor, updateSelection } = usePresence(roomDoc?.provider ?? null, roomDoc
+    const localUser = useMemo(() => roomDoc
         ? { name: displayName, color: getColorForIndex(0), avatarUrl: avatarUrl ?? undefined }
-        : null);
+        : null, [roomDoc, displayName, avatarUrl]);
+    const { collaborators, metrics, updateCursor, updateSelection } = usePresence(roomDoc?.provider ?? null, localUser);
     const { files, activeFile, setActive, getYText, addFile, deleteFile, renameFile } = useFiles(roomDoc?.files ?? null);
     const activeYText = activeFile ? getYText(activeFile) : null;
     const activeLanguage = activeFile ? getLanguageFromFilename(activeFile) : 'plaintext';

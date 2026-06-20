@@ -35,6 +35,9 @@ interface UsePresenceReturn {
 export function usePresence(provider: any | null, localUser: AwarenessUser | null): UsePresenceReturn {
     const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
     const [editCount, setEditCount] = useState(0);
+    const userName = localUser?.name ?? '';
+    const userColor = localUser?.color ?? '';
+    const userAvatar = localUser?.avatarUrl ?? '';
     useEffect(() => {
         if (!provider || !localUser)
             return;
@@ -42,7 +45,7 @@ export function usePresence(provider: any | null, localUser: AwarenessUser | nul
         provider.awareness.setLocalStateField('ping', Date.now());
         provider.awareness.setLocalStateField('cursor', null);
         provider.awareness.setLocalStateField('selection', null);
-    }, [provider, localUser?.name, localUser?.color, localUser?.avatarUrl]);
+    }, [provider, userName, userColor, userAvatar]);
     useEffect(() => {
         if (!provider)
             return;
