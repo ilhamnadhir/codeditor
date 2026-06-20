@@ -48,9 +48,7 @@ export class SupabaseProvider {
     awareness: any;
     private localClientId: string;
     private trackTimeout: any;
-    private updateBuffer: Uint8Array[] = [];
     private sendTimeout: any;
-    private syncInterval: any;
     private isJoined: boolean = false;
 
     constructor(roomId: string, doc: Y.Doc) {
@@ -87,11 +85,8 @@ export class SupabaseProvider {
         // 1. Listen for doc updates and broadcast them
         doc.on('update', this.onDocUpdate);
 
-        // 2. Listen for remote broadcasts
-        this.channel
-            .on('broadcast', { event: 'update' }, this.onRemoteUpdate)
-            .on('broadcast', { event: 'sync-step-1' }, this.onSyncStep1)
-            .on('broadcast', { event: 'sync-step-2' }, this.onRemoteUpdate);
+        // 2. Listen for remote full-state updates
+        this.channel.on('broadcast', { event: 'full-update' }, this.onRemoteFullUpdate);
 
         // 3. Listen for presence (awareness/cursors)
         this.channel
@@ -102,69 +97,46 @@ export class SupabaseProvider {
         this.channel.subscribe(async (status) => {
             if (status === 'SUBSCRIBED') {
                 this.isJoined = true;
-                // Send Sync Step 1 to all connected clients
-                const stateVector = Y.encodeStateVector(doc);
-                await this.channel.send({
-                    type: 'broadcast',
-                    event: 'sync-step-1',
-                    payload: { data: Array.from(stateVector) }
-                });
-                
                 // Track our initial presence
                 this.channel.track({ user: this.localState, clientID: this.doc.clientID });
 
-                // Self-healing: Periodically check if we missed any dropped packets
-                this.syncInterval = setInterval(() => {
-                    if (this.isJoined) {
-                        const sv = Y.encodeStateVector(this.doc);
-                        this.channel.send({
-                            type: 'broadcast',
-                            event: 'sync-step-1',
-                            payload: { data: Array.from(sv) }
-                        });
-                    }
-                }, 4000);
+                // Send initial full state
+                const fullUpdate = Y.encodeStateAsUpdate(this.doc);
+                this.channel.send({
+                    type: 'broadcast',
+                    event: 'full-update',
+                    payload: { data: Array.from(fullUpdate) }
+                });
             }
         });
     }
 
-    private onDocUpdate = (update: Uint8Array, origin: any) => {
+    private onDocUpdate = (_update: Uint8Array, origin: any) => {
         if (origin !== this && origin !== 'db-load') {
-            this.updateBuffer.push(update);
             if (!this.sendTimeout) {
                 this.sendTimeout = setTimeout(() => {
-                    if (this.updateBuffer.length > 0 && this.isJoined) {
-                        const merged = Y.mergeUpdates(this.updateBuffer);
-                        this.updateBuffer = [];
+                    if (this.isJoined) {
+                        // Send the FULL state to guarantee self-healing on every keystroke batch
+                        const fullUpdate = Y.encodeStateAsUpdate(this.doc);
                         this.channel.send({
                             type: 'broadcast',
-                            event: 'update',
-                            payload: { data: Array.from(merged) }
-                        });
+                            event: 'full-update',
+                            payload: { data: Array.from(fullUpdate) }
+                        }).catch(() => {});
                     }
                     this.sendTimeout = null;
-                }, 250); // Increased throttle to 250ms to stay well below Supabase 10 msg/sec limit
+                }, 300); // 300ms throttle
             }
         }
     };
 
-    private onRemoteUpdate = ({ payload }: any) => {
+    private onRemoteFullUpdate = ({ payload }: any) => {
         if (!payload || !payload.data) return;
-        const update = new Uint8Array(payload.data);
-        Y.applyUpdate(this.doc, update, this);
-    };
-
-    private onSyncStep1 = ({ payload }: any) => {
-        if (!payload || !payload.data) return;
-        const remoteStateVector = new Uint8Array(payload.data);
-        const update = Y.encodeStateAsUpdate(this.doc, remoteStateVector);
-        // Yjs empty update is [0, 0]. Only send a reply if there is actual missing data.
-        if (update.length > 2 && this.isJoined) {
-            this.channel.send({
-                type: 'broadcast',
-                event: 'sync-step-2',
-                payload: { data: Array.from(update) }
-            });
+        try {
+            const update = new Uint8Array(payload.data);
+            Y.applyUpdate(this.doc, update, this);
+        } catch (e) {
+            console.error('Failed to apply remote full update', e);
         }
     };
 
@@ -238,7 +210,6 @@ export class SupabaseProvider {
     }
 
     destroy() {
-        if (this.syncInterval) clearInterval(this.syncInterval);
         this.doc.off('update', this.onDocUpdate);
         supabase.removeChannel(this.channel);
     }
