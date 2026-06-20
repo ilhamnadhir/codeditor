@@ -1,6 +1,6 @@
 import * as Y from 'yjs';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
-import { WebrtcProvider } from 'y-webrtc';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {
     let binary = '';
@@ -31,10 +31,259 @@ export interface TerminalLine {
 
 export interface RoomDoc {
     doc: Y.Doc;
-    provider: any | null; // WebrtcProvider
+    provider: SupabaseProvider | null;
     files: Y.Map<Y.Text>;
     terminal: Y.Array<TerminalLine>;
     destroy: () => void;
+}
+
+/**
+ * Custom Yjs Provider using Supabase Realtime Broadcast
+ * Implements the standard Yjs sync protocol and awareness.
+ */
+export class SupabaseProvider {
+    doc: Y.Doc;
+    roomId: string;
+    channel: RealtimeChannel;
+    private trackTimeout: any;
+    private updateBuffer: Uint8Array[] = [];
+    private syncInterval: any;
+    private isJoined: boolean = false;
+    
+    // Bulletproof queue variables
+    private isSending: boolean = false;
+    private sendQueue: (() => Promise<void>)[] = [];
+
+    constructor(roomId: string, doc: Y.Doc) {
+        this.doc = doc;
+        this.roomId = roomId;
+        this.localClientId = crypto.randomUUID();
+        this.awareness = {
+            clientID: doc.clientID,
+            getLocalState: () => this.localState,
+            setLocalState: (state: any) => this.setAwarenessState(state),
+            getStates: () => this.states,
+            setLocalStateField: (field: string, value: any) => {
+                const currentState = this.localState || {};
+                this.setAwarenessState({ ...currentState, [field]: value });
+            },
+            on: (event: string, cb: Function) => {
+                if (!this.listeners[event]) this.listeners[event] = [];
+                this.listeners[event].push(cb);
+            },
+            off: (event: string, cb: Function) => {
+                if (this.listeners[event]) {
+                    this.listeners[event] = this.listeners[event].filter(l => l !== cb);
+                }
+            }
+        };
+
+        this.channel = supabase.channel(`yjs-${roomId}`, {
+            config: {
+                presence: { key: this.localClientId },
+                broadcast: { ack: false }
+            }
+        });
+
+        // 1. Listen for doc updates and buffer them
+        doc.on('update', this.onDocUpdate);
+
+        // 2. Listen for remote updates
+        this.channel
+            .on('broadcast', { event: 'update' }, this.onRemoteUpdate)
+            .on('broadcast', { event: 'sync-step-1' }, this.onSyncStep1)
+            .on('broadcast', { event: 'sync-step-2' }, this.onRemoteUpdate);
+
+        // 3. Listen for presence (awareness/cursors)
+        this.channel
+            .on('presence', { event: 'sync' }, this.onPresenceSync)
+            .on('presence', { event: 'join' }, this.onPresenceJoin)
+            .on('presence', { event: 'leave' }, this.onPresenceLeave);
+
+        this.channel.subscribe(async (status) => {
+            if (status === 'SUBSCRIBED') {
+                this.isJoined = true;
+                this.enqueueSend(async () => {
+                    this.channel.track({ user: this.localState, clientID: this.doc.clientID });
+                });
+
+                // Initial sync
+                this.enqueueSend(async () => {
+                    const sv = Y.encodeStateVector(this.doc);
+                    this.channel.send({
+                        type: 'broadcast',
+                        event: 'sync-step-1',
+                        payload: { data: uint8ArrayToBase64(sv) }
+                    });
+                });
+
+                // Self-healing heartbeat every 5 seconds
+                this.syncInterval = setInterval(() => {
+                    if (this.isJoined) {
+                        this.enqueueSend(async () => {
+                            const sv = Y.encodeStateVector(this.doc);
+                            this.channel.send({
+                                type: 'broadcast',
+                                event: 'sync-step-1',
+                                payload: { data: uint8ArrayToBase64(sv) }
+                            });
+                        });
+                    }
+                }, 5000);
+            }
+        });
+    }
+
+    private enqueueSend(task: () => Promise<void>) {
+        this.sendQueue.push(task);
+        this.processQueue();
+    }
+
+    private async processQueue() {
+        if (this.isSending || this.sendQueue.length === 0 || !this.isJoined) return;
+        this.isSending = true;
+
+        while (this.sendQueue.length > 0 && this.isJoined) {
+            const task = this.sendQueue.shift();
+            if (task) {
+                try {
+                    await task();
+                } catch (e) {
+                    console.error('Send error:', e);
+                }
+            }
+            // Strict 200ms delay guarantees max 5 messages/sec (well below Supabase 10/sec limit)
+            await new Promise(resolve => setTimeout(resolve, 200));
+        }
+
+        this.isSending = false;
+    }
+
+    private onDocUpdate = (update: Uint8Array, origin: any) => {
+        if (origin !== this && origin !== 'db-load') {
+            this.updateBuffer.push(update);
+            
+            // If this is the only item in the buffer, schedule a flush
+            if (this.updateBuffer.length === 1) {
+                this.enqueueSend(async () => {
+                    if (this.updateBuffer.length === 0) return;
+                    const merged = Y.mergeUpdates(this.updateBuffer);
+                    this.updateBuffer = [];
+                    this.channel.send({
+                        type: 'broadcast',
+                        event: 'update',
+                        payload: { data: uint8ArrayToBase64(merged) }
+                    });
+                });
+            }
+        }
+    };
+
+    private onRemoteUpdate = ({ payload }: any) => {
+        if (!payload || !payload.data) return;
+        try {
+            const update = base64ToUint8Array(payload.data);
+            Y.applyUpdate(this.doc, update, this);
+        } catch (e) {
+            console.error('Failed to apply remote update', e);
+        }
+    };
+
+    private onSyncStep1 = ({ payload }: any) => {
+        if (!payload || !payload.data) return;
+        try {
+            const remoteStateVector = base64ToUint8Array(payload.data);
+            const update = Y.encodeStateAsUpdate(this.doc, remoteStateVector);
+            // Yjs empty update is 2 bytes. Only reply if we have missing data.
+            if (update.length > 2 && this.isJoined) {
+                this.enqueueSend(async () => {
+                    this.channel.send({
+                        type: 'broadcast',
+                        event: 'sync-step-2',
+                        payload: { data: uint8ArrayToBase64(update) }
+                    });
+                });
+            }
+        } catch (e) {
+            console.error('Failed to process sync-step-1', e);
+        }
+    };
+
+    // --- Awareness Implementation ---
+    private localState: any = null;
+    private states: Map<number, any> = new Map();
+    private listeners: Record<string, Function[]> = {};
+
+    private setAwarenessState(state: any) {
+        this.localState = state;
+        if (this.isJoined) {
+            if (!this.trackTimeout) {
+                this.trackTimeout = setTimeout(() => {
+                    if (this.isJoined) {
+                        this.enqueueSend(async () => {
+                            this.channel.track({ user: this.localState, clientID: this.doc.clientID });
+                        });
+                    }
+                    this.trackTimeout = null;
+                }, 300);
+            }
+        }
+        this.emitAwareness('update', { added: [], updated: [this.doc.clientID], removed: [] });
+    }
+
+    private onPresenceSync = () => {
+        const state = this.channel.presenceState();
+        this.updateAwarenessFromPresence(state);
+    };
+
+    private onPresenceJoin = () => {
+        this.updateAwarenessFromPresence(this.channel.presenceState());
+    };
+
+    private onPresenceLeave = () => {
+        this.updateAwarenessFromPresence(this.channel.presenceState());
+    };
+
+    private updateAwarenessFromPresence(presenceState: any) {
+        const updated: number[] = [];
+        const added: number[] = [];
+        const oldKeys = new Set(this.states.keys());
+
+        for (const [key, presences] of Object.entries(presenceState)) {
+            const p = (presences as any[])[0];
+            if (!p || !p.clientID) continue;
+            
+            if (this.states.has(p.clientID)) {
+                updated.push(p.clientID);
+            } else {
+                added.push(p.clientID);
+            }
+            this.states.set(p.clientID, p.user);
+            oldKeys.delete(p.clientID);
+        }
+
+        const removed = Array.from(oldKeys);
+        for (const r of removed) {
+            this.states.delete(r);
+        }
+
+        if (added.length > 0 || updated.length > 0 || removed.length > 0) {
+            this.emitAwareness('change', { added, updated, removed }, 'local');
+            this.emitAwareness('update', { added, updated, removed }, 'local');
+        }
+    }
+
+    private emitAwareness(event: string, args: any, origin?: any) {
+        if (this.listeners[event]) {
+            this.listeners[event].forEach(cb => cb(args, origin));
+        }
+    }
+
+    destroy() {
+        if (this.syncInterval) clearInterval(this.syncInterval);
+        this.doc.off('update', this.onDocUpdate);
+        supabase.removeChannel(this.channel);
+    }
 }
 
 const roomDocCache = new Map<string, { doc: RoomDoc; refs: number }>();
@@ -56,24 +305,18 @@ export function createRoomDoc(roomId: string): RoomDoc {
         files.set('main.js', defaultText);
     }
 
-    let provider: any = null;
+    let provider: SupabaseProvider | null = null;
     
-    // We use WebRTC for ultra-low latency peer-to-peer real-time sync (bypassing any server rate limits).
-    // The signaling servers simply introduce the peers; all code data flows directly browser-to-browser.
-    provider = new WebrtcProvider(`codesync-room-${roomId}`, doc, {
-        signaling: [
-            'wss://signaling.yjs.dev',
-            'wss://y-webrtc-signaling-eu.herokuapp.com'
-        ]
-    });
-
     if (isSupabaseConfigured) {
+        provider = new SupabaseProvider(roomId, doc);
+        
         // Auto-save mechanism: save full Y.Doc state to snapshots table
         let timeout: any;
         doc.on('update', (_update, origin) => {
+            // If the update came from a remote peer, that peer will handle the auto-save.
+            if (provider && origin === provider) return;
             // Ignore updates that come from loading the initial database snapshot
-            // and ignore updates coming from the WebRTC provider (remote peers)
-            if (origin === 'db-load' || origin === provider) return;
+            if (origin === 'db-load') return;
 
             clearTimeout(timeout);
             timeout = setTimeout(async () => {
@@ -88,10 +331,10 @@ export function createRoomDoc(roomId: string): RoomDoc {
                     author: 'system'
                 });
                 if (error) console.error('Supabase Auto-save Error:', error);
-            }, 1000); // Save after 1s of inactivity to database
+            }, 500); // Save after 500ms of inactivity
         });
 
-        // Fetch initial state from database
+        // Fetch initial state
         supabase.from('snapshots')
             .select('*')
             .eq('room_id', roomId)
@@ -103,7 +346,7 @@ export function createRoomDoc(roomId: string): RoomDoc {
                     console.error('Supabase Fetch Error:', error);
                 }
                 
-                if (files.size > 0) return; // Already received state from another WebRTC peer
+                if (files.size > 0) return; // Already received state from another peer
                 
                 if (data && data.length > 0) {
                     const snap = data[0];
