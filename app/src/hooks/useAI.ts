@@ -79,8 +79,7 @@ export function useAI(): UseAIReturn {
 
     try {
       const genAI = new GoogleGenerativeAI(GEMINI_KEY!)
-      // Wait, let's use gemini-1.5-flash which is the standard fast model
-      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
 
       const prompt = buildPrompt(task, code, allFiles)
       const stream = await model.generateContentStream(prompt)
