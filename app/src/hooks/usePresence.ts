@@ -42,7 +42,7 @@ export function usePresence(provider: any | null, localUser: AwarenessUser | nul
         provider.awareness.setLocalStateField('ping', Date.now());
         provider.awareness.setLocalStateField('cursor', null);
         provider.awareness.setLocalStateField('selection', null);
-    }, [provider, localUser]);
+    }, [provider, localUser?.name, localUser?.color, localUser?.avatarUrl]);
     useEffect(() => {
         if (!provider)
             return;
