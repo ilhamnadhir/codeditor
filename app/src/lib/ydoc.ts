@@ -50,6 +50,7 @@ export class SupabaseProvider {
     private trackTimeout: any;
     private updateBuffer: Uint8Array[] = [];
     private sendTimeout: any;
+    private isJoined: boolean = false;
 
     constructor(roomId: string, doc: Y.Doc) {
         this.doc = doc;
@@ -99,12 +100,13 @@ export class SupabaseProvider {
 
         this.channel.subscribe(async (status) => {
             if (status === 'SUBSCRIBED') {
+                this.isJoined = true;
                 // Send Sync Step 1 to all connected clients
                 const stateVector = Y.encodeStateVector(doc);
                 await this.channel.send({
                     type: 'broadcast',
                     event: 'sync-step-1',
-                    payload: Array.from(stateVector)
+                    payload: { data: Array.from(stateVector) }
                 });
                 
                 // Track our initial presence
@@ -118,13 +120,13 @@ export class SupabaseProvider {
             this.updateBuffer.push(update);
             if (!this.sendTimeout) {
                 this.sendTimeout = setTimeout(() => {
-                    if (this.updateBuffer.length > 0) {
+                    if (this.updateBuffer.length > 0 && this.isJoined) {
                         const merged = Y.mergeUpdates(this.updateBuffer);
                         this.updateBuffer = [];
                         this.channel.send({
                             type: 'broadcast',
                             event: 'update',
-                            payload: Array.from(merged)
+                            payload: { data: Array.from(merged) }
                         });
                     }
                     this.sendTimeout = null;
@@ -134,18 +136,22 @@ export class SupabaseProvider {
     };
 
     private onRemoteUpdate = ({ payload }: any) => {
-        const update = new Uint8Array(payload);
+        if (!payload || !payload.data) return;
+        const update = new Uint8Array(payload.data);
         Y.applyUpdate(this.doc, update, this);
     };
 
     private onSyncStep1 = ({ payload }: any) => {
-        const remoteStateVector = new Uint8Array(payload);
+        if (!payload || !payload.data) return;
+        const remoteStateVector = new Uint8Array(payload.data);
         const update = Y.encodeStateAsUpdate(this.doc, remoteStateVector);
-        this.channel.send({
-            type: 'broadcast',
-            event: 'sync-step-2',
-            payload: Array.from(update)
-        });
+        if (this.isJoined) {
+            this.channel.send({
+                type: 'broadcast',
+                event: 'sync-step-2',
+                payload: { data: Array.from(update) }
+            });
+        }
     };
 
     // --- Awareness Implementation ---
@@ -155,11 +161,13 @@ export class SupabaseProvider {
 
     private setAwarenessState(state: any) {
         this.localState = state;
-        if (this.channel.state === 'joined') {
+        if (this.isJoined) {
             // Throttle track calls to avoid Supabase rate limits (10/sec)
             if (!this.trackTimeout) {
                 this.trackTimeout = setTimeout(() => {
-                    this.channel.track({ user: this.localState, clientID: this.doc.clientID });
+                    if (this.isJoined) {
+                        this.channel.track({ user: this.localState, clientID: this.doc.clientID });
+                    }
                     this.trackTimeout = null;
                 }, 150);
             }
