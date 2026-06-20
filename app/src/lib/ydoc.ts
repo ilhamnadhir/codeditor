@@ -1,6 +1,6 @@
 import * as Y from 'yjs';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
-import { WebsocketProvider } from 'y-websocket';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {
     let binary = '';
@@ -31,15 +31,202 @@ export interface TerminalLine {
 
 export interface RoomDoc {
     doc: Y.Doc;
-    provider: WebsocketProvider | null;
+    provider: SupabaseProvider | null;
     files: Y.Map<Y.Text>;
     terminal: Y.Array<TerminalLine>;
     destroy: () => void;
 }
 
-export function setAwarenessUser(provider: any, user: { name?: string, color: string, avatarUrl?: string }) {
-    if (!provider?.awareness) return;
-    provider.awareness.setLocalStateField('user', user);
+/**
+ * Custom Yjs Provider using Supabase Realtime Broadcast
+ * Implements the standard Yjs sync protocol and awareness.
+ */
+export class SupabaseProvider {
+    doc: Y.Doc;
+    roomId: string;
+    channel: RealtimeChannel;
+    awareness: any;
+    private localClientId: string;
+    private trackTimeout: any;
+    private updateBuffer: Uint8Array[] = [];
+    private sendTimeout: any;
+    private isJoined: boolean = false;
+
+    constructor(roomId: string, doc: Y.Doc) {
+        this.doc = doc;
+        this.roomId = roomId;
+        this.localClientId = crypto.randomUUID();
+        this.awareness = {
+            clientID: doc.clientID,
+            getLocalState: () => this.localState,
+            setLocalState: (state: any) => this.setAwarenessState(state),
+            getStates: () => this.states,
+            setLocalStateField: (field: string, value: any) => {
+                const currentState = this.localState || {};
+                this.setAwarenessState({ ...currentState, [field]: value });
+            },
+            on: (event: string, cb: Function) => {
+                if (!this.listeners[event]) this.listeners[event] = [];
+                this.listeners[event].push(cb);
+            },
+            off: (event: string, cb: Function) => {
+                if (this.listeners[event]) {
+                    this.listeners[event] = this.listeners[event].filter(l => l !== cb);
+                }
+            }
+        };
+
+        this.channel = supabase.channel(`yjs-${roomId}`, {
+            config: {
+                presence: { key: this.localClientId },
+                broadcast: { ack: false }
+            }
+        });
+
+        // 1. Listen for doc updates and broadcast them
+        doc.on('update', this.onDocUpdate);
+
+        // 2. Listen for remote broadcasts
+        this.channel
+            .on('broadcast', { event: 'update' }, this.onRemoteUpdate)
+            .on('broadcast', { event: 'sync-step-1' }, this.onSyncStep1)
+            .on('broadcast', { event: 'sync-step-2' }, this.onRemoteUpdate);
+
+        // 3. Listen for presence (awareness/cursors)
+        this.channel
+            .on('presence', { event: 'sync' }, this.onPresenceSync)
+            .on('presence', { event: 'join' }, this.onPresenceJoin)
+            .on('presence', { event: 'leave' }, this.onPresenceLeave);
+
+        this.channel.subscribe(async (status) => {
+            if (status === 'SUBSCRIBED') {
+                this.isJoined = true;
+                // Send Sync Step 1 to all connected clients
+                const stateVector = Y.encodeStateVector(doc);
+                await this.channel.send({
+                    type: 'broadcast',
+                    event: 'sync-step-1',
+                    payload: { data: Array.from(stateVector) }
+                });
+                
+                // Track our initial presence
+                this.channel.track({ user: this.localState, clientID: this.doc.clientID });
+            }
+        });
+    }
+
+    private onDocUpdate = (update: Uint8Array, origin: any) => {
+        if (origin !== this && origin !== 'db-load') {
+            this.updateBuffer.push(update);
+            if (!this.sendTimeout) {
+                this.sendTimeout = setTimeout(() => {
+                    if (this.updateBuffer.length > 0 && this.isJoined) {
+                        const merged = Y.mergeUpdates(this.updateBuffer);
+                        this.updateBuffer = [];
+                        this.channel.send({
+                            type: 'broadcast',
+                            event: 'update',
+                            payload: { data: Array.from(merged) }
+                        });
+                    }
+                    this.sendTimeout = null;
+                }, 100);
+            }
+        }
+    };
+
+    private onRemoteUpdate = ({ payload }: any) => {
+        if (!payload || !payload.data) return;
+        const update = new Uint8Array(payload.data);
+        Y.applyUpdate(this.doc, update, this);
+    };
+
+    private onSyncStep1 = ({ payload }: any) => {
+        if (!payload || !payload.data) return;
+        const remoteStateVector = new Uint8Array(payload.data);
+        const update = Y.encodeStateAsUpdate(this.doc, remoteStateVector);
+        if (this.isJoined) {
+            this.channel.send({
+                type: 'broadcast',
+                event: 'sync-step-2',
+                payload: { data: Array.from(update) }
+            });
+        }
+    };
+
+    // --- Awareness Implementation ---
+    private localState: any = null;
+    private states: Map<number, any> = new Map();
+    private listeners: Record<string, Function[]> = {};
+
+    private setAwarenessState(state: any) {
+        this.localState = state;
+        if (this.isJoined) {
+            // Throttle track calls to avoid Supabase rate limits (10/sec)
+            if (!this.trackTimeout) {
+                this.trackTimeout = setTimeout(() => {
+                    if (this.isJoined) {
+                        this.channel.track({ user: this.localState, clientID: this.doc.clientID });
+                    }
+                    this.trackTimeout = null;
+                }, 150);
+            }
+        }
+        this.emitAwareness('update', { added: [], updated: [this.doc.clientID], removed: [] });
+    }
+
+    private onPresenceSync = () => {
+        const state = this.channel.presenceState();
+        this.updateAwarenessFromPresence(state);
+    };
+
+    private onPresenceJoin = () => {
+        this.updateAwarenessFromPresence(this.channel.presenceState());
+    };
+
+    private onPresenceLeave = () => {
+        this.updateAwarenessFromPresence(this.channel.presenceState());
+    };
+
+    private updateAwarenessFromPresence(presenceState: any) {
+        const updated: number[] = [];
+        const added: number[] = [];
+        const oldKeys = new Set(this.states.keys());
+
+        for (const [key, presences] of Object.entries(presenceState)) {
+            const p = (presences as any[])[0];
+            if (!p || !p.clientID) continue;
+            
+            if (this.states.has(p.clientID)) {
+                updated.push(p.clientID);
+            } else {
+                added.push(p.clientID);
+            }
+            this.states.set(p.clientID, p.user);
+            oldKeys.delete(p.clientID);
+        }
+
+        const removed = Array.from(oldKeys);
+        for (const r of removed) {
+            this.states.delete(r);
+        }
+
+        if (added.length > 0 || updated.length > 0 || removed.length > 0) {
+            this.emitAwareness('change', { added, updated, removed }, 'local');
+            this.emitAwareness('update', { added, updated, removed }, 'local');
+        }
+    }
+
+    private emitAwareness(event: string, args: any, origin?: any) {
+        if (this.listeners[event]) {
+            this.listeners[event].forEach(cb => cb(args, origin));
+        }
+    }
+
+    destroy() {
+        this.doc.off('update', this.onDocUpdate);
+        supabase.removeChannel(this.channel);
+    }
 }
 
 const roomDocCache = new Map<string, { doc: RoomDoc; refs: number }>();
@@ -55,13 +242,17 @@ export function createRoomDoc(roomId: string): RoomDoc {
     const files = doc.getMap<Y.Text>('files');
     const terminal = doc.getArray<TerminalLine>('terminal');
 
-    // Use local WebSocket server in dev, fallback to demos server in production
-    const wsHost = window.location.hostname === 'localhost' || window.location.hostname.match(/^192\.168\./) || window.location.hostname.match(/^10\./) 
-        ? `ws://${window.location.hostname}:1234`
-        : 'wss://demos.yjs.dev/ws';
-    const provider = new WebsocketProvider(wsHost, `codesync-${roomId}`, doc);
+    if (!isSupabaseConfigured && files.size === 0) {
+        const defaultText = new Y.Text();
+        defaultText.insert(0, '// Welcome to CodeSync\n// Start coding and invite collaborators!\n');
+        files.set('main.js', defaultText);
+    }
 
+    let provider: SupabaseProvider | null = null;
+    
     if (isSupabaseConfigured) {
+        provider = new SupabaseProvider(roomId, doc);
+        
         // Auto-save mechanism: save full Y.Doc state to snapshots table
         let timeout: any;
         doc.on('update', (_update, origin) => {
@@ -75,7 +266,6 @@ export function createRoomDoc(roomId: string): RoomDoc {
                 const updateBytes = Y.encodeStateAsUpdate(doc);
                 const content = uint8ArrayToBase64(updateBytes);
                 
-                // Save the full document state vector as a special snapshot
                 const { error } = await supabase.from('snapshots').insert({
                     room_id: roomId,
                     file_name: '.yjs-state',
@@ -112,7 +302,6 @@ export function createRoomDoc(roomId: string): RoomDoc {
                         }
                     }
                 } else {
-                    // No state found, brand new room
                     doc.transact(() => {
                         const defaultText = new Y.Text();
                         defaultText.insert(0, '// Welcome to CodeSync\n// Start coding and invite collaborators!\n');
