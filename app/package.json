@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host",
+    "collab": "node collab-server.cjs",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"
@@ -21,7 +22,6 @@
     "react-router-dom": "^7.18.0",
     "y-monaco": "^0.1.6",
     "y-protocols": "^1.0.7",
-    "y-websocket": "^3.0.0",
     "yjs": "^13.6.31"
   },
   "devDependencies": {
@@ -34,6 +34,8 @@
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.6.0",
     "typescript": "^6.0.3",
-    "vite": "^8.0.12"
+    "vite": "^8.0.12",
+    "ws": "^8.21.0",
+    "y-websocket": "^3.0.0"
   }
 }

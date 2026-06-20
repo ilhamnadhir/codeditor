@@ -55,7 +55,11 @@ export function createRoomDoc(roomId: string): RoomDoc {
     const files = doc.getMap<Y.Text>('files');
     const terminal = doc.getArray<TerminalLine>('terminal');
 
-    const provider = new WebsocketProvider('wss://demos.yjs.dev/ws', `codesync-${roomId}`, doc);
+    // Use local WebSocket server in dev, fallback to demos server in production
+    const wsHost = window.location.hostname === 'localhost' || window.location.hostname.match(/^192\.168\./) || window.location.hostname.match(/^10\./) 
+        ? `ws://${window.location.hostname}:1234`
+        : 'wss://demos.yjs.dev/ws';
+    const provider = new WebsocketProvider(wsHost, `codesync-${roomId}`, doc);
 
     if (isSupabaseConfigured) {
         // Auto-save mechanism: save full Y.Doc state to snapshots table
