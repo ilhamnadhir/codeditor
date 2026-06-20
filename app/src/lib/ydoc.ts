@@ -50,6 +50,7 @@ export class SupabaseProvider {
     private trackTimeout: any;
     private updateBuffer: Uint8Array[] = [];
     private sendTimeout: any;
+    private syncInterval: any;
     private isJoined: boolean = false;
 
     constructor(roomId: string, doc: Y.Doc) {
@@ -111,6 +112,18 @@ export class SupabaseProvider {
                 
                 // Track our initial presence
                 this.channel.track({ user: this.localState, clientID: this.doc.clientID });
+
+                // Self-healing: Periodically check if we missed any dropped packets
+                this.syncInterval = setInterval(() => {
+                    if (this.isJoined) {
+                        const sv = Y.encodeStateVector(this.doc);
+                        this.channel.send({
+                            type: 'broadcast',
+                            event: 'sync-step-1',
+                            payload: { data: Array.from(sv) }
+                        });
+                    }
+                }, 4000);
             }
         });
     }
@@ -130,7 +143,7 @@ export class SupabaseProvider {
                         });
                     }
                     this.sendTimeout = null;
-                }, 100);
+                }, 250); // Increased throttle to 250ms to stay well below Supabase 10 msg/sec limit
             }
         }
     };
@@ -145,7 +158,8 @@ export class SupabaseProvider {
         if (!payload || !payload.data) return;
         const remoteStateVector = new Uint8Array(payload.data);
         const update = Y.encodeStateAsUpdate(this.doc, remoteStateVector);
-        if (this.isJoined) {
+        // Yjs empty update is [0, 0]. Only send a reply if there is actual missing data.
+        if (update.length > 2 && this.isJoined) {
             this.channel.send({
                 type: 'broadcast',
                 event: 'sync-step-2',
@@ -169,7 +183,7 @@ export class SupabaseProvider {
                         this.channel.track({ user: this.localState, clientID: this.doc.clientID });
                     }
                     this.trackTimeout = null;
-                }, 150);
+                }, 300); // Increased presence throttle to 300ms
             }
         }
         this.emitAwareness('update', { added: [], updated: [this.doc.clientID], removed: [] });
@@ -224,6 +238,7 @@ export class SupabaseProvider {
     }
 
     destroy() {
+        if (this.syncInterval) clearInterval(this.syncInterval);
         this.doc.off('update', this.onDocUpdate);
         supabase.removeChannel(this.channel);
     }
