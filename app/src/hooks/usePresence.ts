@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import type { WebrtcProvider } from 'y-webrtc';
+
 import type { AwarenessUser } from '@/lib/awareness';
 export interface Collaborator {
     clientId: number;
@@ -32,7 +32,7 @@ interface UsePresenceReturn {
     } | null) => void;
     updateSelection: (sel: Collaborator['selection']) => void;
 }
-export function usePresence(provider: WebrtcProvider | null, localUser: AwarenessUser | null): UsePresenceReturn {
+export function usePresence(provider: any | null, localUser: AwarenessUser | null): UsePresenceReturn {
     const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
     const [editCount, setEditCount] = useState(0);
     useEffect(() => {
@@ -51,7 +51,7 @@ export function usePresence(provider: WebrtcProvider | null, localUser: Awarenes
             const states = awareness.getStates();
             const myClientId = awareness.clientID;
             const result: Collaborator[] = [];
-            states.forEach((state, clientId) => {
+            states.forEach((state: any, clientId: number) => {
                 if (clientId === myClientId)
                     return;
                 if (!state.user)

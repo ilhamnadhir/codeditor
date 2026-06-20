@@ -1,4 +1,4 @@
-import type { WebrtcProvider } from 'y-webrtc';
+
 export interface AwarenessUser {
     name: string;
     color: string;
@@ -12,11 +12,12 @@ export const USER_COLORS = [
 export function getColorForIndex(index: number): string {
     return USER_COLORS[index % USER_COLORS.length];
 }
-export function setAwarenessUser(provider: WebrtcProvider, user: AwarenessUser): void {
+export function setAwarenessUser(provider: any, user: AwarenessUser): void {
+    if (!provider?.awareness) return;
     provider.awareness.setLocalStateField('user', user);
     provider.awareness.setLocalStateField('ping', Date.now());
 }
-export function setAwarenessCursor(provider: WebrtcProvider, cursor: {
+export function setAwarenessCursor(provider: any, cursor: {
     lineNumber: number;
     column: number;
 } | null, selection?: {
@@ -25,6 +26,7 @@ export function setAwarenessCursor(provider: WebrtcProvider, cursor: {
     endLineNumber: number;
     endColumn: number;
 } | null): void {
+    if (!provider?.awareness) return;
     provider.awareness.setLocalStateField('cursor', cursor);
     provider.awareness.setLocalStateField('selection', selection ?? null);
     provider.awareness.setLocalStateField('ping', Date.now());

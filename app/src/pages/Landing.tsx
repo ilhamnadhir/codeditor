@@ -4,7 +4,7 @@ import { generateRoomId, getRecentRooms, type RecentRoom } from '@/features/room
 import { useRoom } from '@/hooks/useRoom';
 import { useAuth } from '@/features/auth/AuthContext';
 import { isSupabaseConfigured } from '@/lib/supabase';
-const FEATURES = [];
+const FEATURES: any[] = [];
 export default function Landing() {
     const navigate = useNavigate();
     const { user, isConfigured } = useAuth();

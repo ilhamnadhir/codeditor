@@ -3,13 +3,13 @@ import MonacoEditor from '@monaco-editor/react';
 import type * as monaco from 'monaco-editor';
 import * as Y from 'yjs';
 import { MonacoBinding } from 'y-monaco';
-import type { WebrtcProvider } from 'y-webrtc';
+
 import { applyRemoteCursors, clearRemoteCursors } from './cursorDecorations';
 import type { Collaborator } from '@/hooks/usePresence';
 interface Props {
     yText: Y.Text | null;
     language: string;
-    provider: WebrtcProvider | null;
+    provider: any | null;
     collaborators: Collaborator[];
     readOnly: boolean;
     theme: 'dark' | 'light';
