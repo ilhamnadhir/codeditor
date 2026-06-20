@@ -1,158 +1,104 @@
-import React from 'react'
-import { Link } from 'react-router-dom'
-import CollaboratorAvatars from '@/components/presence/CollaboratorAvatars'
-import PresenceMetrics     from '@/components/presence/PresenceMetrics'
-import type { Collaborator } from '@/hooks/usePresence'
-import { useAuth }          from '@/features/auth/AuthContext'
-import { copyRoomUrl }      from '@/features/rooms/roomUtils'
-
+import React from 'react';
+import { Link } from 'react-router-dom';
+import CollaboratorAvatars from '@/components/presence/CollaboratorAvatars';
+import PresenceMetrics from '@/components/presence/PresenceMetrics';
+import type { Collaborator } from '@/hooks/usePresence';
+import { useAuth } from '@/features/auth/AuthContext';
+import { copyRoomUrl } from '@/features/rooms/roomUtils';
 interface Props {
-  roomId:        string
-  roomName:      string
-  collaborators: Collaborator[]
-  activeUsers:   number
-  editCount:     number
-  latencyMs:     number | null
-  aiOpen:        boolean
-  runOpen:       boolean
-  onToggleAI:    () => void
-  onToggleRun:   () => void
-  onRun:         () => void
-  running:       boolean
-  canRun:        boolean
-  theme:         'dark' | 'light'
-  onToggleTheme: () => void
+    roomId: string;
+    roomName: string;
+    collaborators: Collaborator[];
+    activeUsers: number;
+    editCount: number;
+    latencyMs: number | null;
+    versionsOpen?: boolean;
+    runOpen?: boolean;
+    onToggleVersions?: () => void;
+    onToggleRun: () => void;
+    onRun: () => void;
+    running: boolean;
+    canRun: boolean;
+    theme: 'dark' | 'light';
+    onToggleTheme: () => void;
 }
+export default function Topbar({ roomId, roomName, collaborators, activeUsers, editCount, latencyMs, versionsOpen, runOpen, onToggleVersions, onToggleRun, onRun, running, canRun, theme, onToggleTheme, }: Props) {
+    const { user, displayName, avatarUrl, signOut, isConfigured } = useAuth();
+    const [copied, setCopied] = React.useState(false);
+    const handleShare = async () => {
+        const ok = await copyRoomUrl(roomId);
+        if (ok) {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        }
+    };
+    return (<div className="topbar">
 
-export default function Topbar({
-  roomId, roomName, collaborators,
-  activeUsers, editCount, latencyMs,
-  aiOpen, runOpen,
-  onToggleAI, onToggleRun, onRun, running, canRun,
-  theme, onToggleTheme,
-}: Props) {
-  const { user, displayName, avatarUrl, signOut, isConfigured } = useAuth()
-  const [copied, setCopied] = React.useState(false)
-
-  const handleShare = async () => {
-    const ok = await copyRoomUrl(roomId)
-    if (ok) {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    }
-  }
-
-  return (
-    <div className="topbar">
-      {/* Logo */}
       <Link to="/" className="topbar-logo">
         <span className="logo-mark">CS</span>
       </Link>
 
-      <div className="topbar-divider" />
+      <div className="topbar-divider"/>
 
-      {/* Room name */}
+
       <span className="topbar-room-name" title={roomName}>
         {roomName || roomId}
       </span>
 
-      {/* Live presence metrics */}
-      <PresenceMetrics
-        activeUsers={activeUsers}
-        editCount={editCount}
-        latencyMs={latencyMs}
-      />
 
-      <div className="topbar-spacer" />
+      <PresenceMetrics activeUsers={activeUsers} editCount={editCount} latencyMs={latencyMs}/>
 
-      {/* Collaborator avatars */}
-      <CollaboratorAvatars collaborators={collaborators} />
+      <div className="topbar-spacer"/>
 
-      <div className="topbar-divider" />
 
-      {/* Actions */}
+      <CollaboratorAvatars collaborators={collaborators}/>
+
+      <div className="topbar-divider"/>
+
+
       <div className="topbar-actions">
 
-        {/* Share */}
-        <button
-          className="btn btn-secondary btn-sm"
-          onClick={handleShare}
-          id="share-room-btn"
-          title="Copy invite link"
-        >
+
+        <button className="btn btn-secondary btn-sm" onClick={handleShare} id="share-room-btn" title="Copy invite link">
           {copied ? '✓ Copied' : '⎘ Share'}
         </button>
 
-        {/* Run — disabled when language can't be executed */}
-        <button
-          className={`btn btn-sm ${running ? 'btn-secondary' : 'btn-primary'}`}
-          onClick={onRun}
-          disabled={running || !canRun}
-          id="run-code-btn"
-          title={canRun ? 'Run code' : 'This language cannot be executed via Piston'}
-        >
+
+        <button className={`btn btn-sm ${running ? 'btn-secondary' : 'btn-primary'}`} onClick={onRun} disabled={running || !canRun} id="run-code-btn" title={canRun ? 'Run code' : 'This language cannot be executed via Piston'}>
           {running
             ? <><span className="spin">⟳</span> Running</>
-            : '▶ Run'
-          }
+            : '▶ Run'}
         </button>
 
-        {/* AI panel toggle */}
-        <button
-          className={`btn btn-icon btn-sm ${aiOpen ? 'btn-primary' : 'btn-ghost'}`}
-          onClick={onToggleAI}
-          id="toggle-ai-btn"
-          title="AI Assistant"
-        >
-          ✦
-        </button>
 
-        {/* Terminal toggle */}
-        <button
-          className={`btn btn-icon btn-sm ${runOpen ? 'btn-primary' : 'btn-ghost'}`}
-          onClick={onToggleRun}
-          id="toggle-terminal-btn"
-          title="Toggle terminal"
-        >
+        {/* AI removed */}
+
+
+        <button className={`btn btn-icon btn-sm ${runOpen ? 'btn-primary' : 'btn-ghost'}`} onClick={onToggleRun} id="toggle-terminal-btn" title="Toggle terminal">
           ⊞
         </button>
+        <button className={`btn btn-icon btn-sm ${versionsOpen ? 'btn-primary' : 'btn-ghost'}`} onClick={onToggleVersions} id="toggle-versions-btn" title="History panel">
+          ⬜
+        </button>
 
-        {/* Theme toggle */}
-        <button
-          className="btn btn-icon btn-sm btn-ghost"
-          onClick={onToggleTheme}
-          id="toggle-theme-btn"
-          title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-        >
+
+        <button className="btn btn-icon btn-sm btn-ghost" onClick={onToggleTheme} id="toggle-theme-btn" title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}>
           {theme === 'dark' ? '☀' : '☽'}
         </button>
 
-        {/* User identity */}
-        {isConfigured && (
-          <>
-            <div className="topbar-divider" />
-            {user ? (
-              <div
-                className="avatar"
-                style={{
-                  width: 28, height: 28,
-                  background: 'var(--accent)',
-                  fontSize: 11, cursor: 'pointer',
-                }}
-                onClick={signOut}
-                title={`${displayName} · Click to sign out`}
-              >
+
+        {isConfigured && (<>
+            <div className="topbar-divider"/>
+            {user ? (<div className="avatar" style={{
+                    width: 28, height: 28,
+                    background: 'var(--accent)',
+                    fontSize: 11, cursor: 'pointer',
+                }} onClick={signOut} title={`${displayName} · Click to sign out`}>
                 {avatarUrl
-                  ? <img src={avatarUrl} alt={displayName} />
-                  : displayName.charAt(0).toUpperCase()
-                }
-              </div>
-            ) : (
-              <Link to="/login" className="btn btn-ghost btn-sm">Sign in</Link>
-            )}
-          </>
-        )}
+                    ? <img src={avatarUrl} alt={displayName}/>
+                    : displayName.charAt(0).toUpperCase()}
+              </div>) : (<Link to="/login" className="btn btn-ghost btn-sm">Sign in</Link>)}
+          </>)}
       </div>
-    </div>
-  )
+    </div>);
 }
