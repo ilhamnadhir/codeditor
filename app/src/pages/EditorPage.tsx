@@ -9,7 +9,6 @@ import { useRunner }        from '@/hooks/useRunner'
 import { getColorForIndex } from '@/lib/awareness'
 import { recordRecentRoom } from '@/features/rooms/roomUtils'
 import { getLanguageFromFilename, canExecute } from '@/features/editor/languageMap'
-import { isExecutionConfigured } from '@/lib/piston'
 
 import Topbar        from '@/components/layout/Topbar'
 import FileExplorer  from '@/features/files/FileExplorer'
@@ -119,7 +118,7 @@ export default function EditorPage() {
         onToggleRun={() => setRunOpen(o => !o)}
         onRun={handleRun}
         running={running}
-        canRun={canExecute(activeLanguage) && isExecutionConfigured()}
+        canRun={canExecute(activeLanguage)}
         theme={theme}
         onToggleTheme={toggleTheme}
       />

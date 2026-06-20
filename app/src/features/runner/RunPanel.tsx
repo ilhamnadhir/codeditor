@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type * as Y from 'yjs'
 import type { TerminalLine } from '@/lib/ydoc'
 import { useRunner }              from '@/hooks/useRunner'
-import { getPistonRuntime, isExecutionConfigured } from '@/lib/piston'
+import { getPistonRuntime }       from '@/lib/piston'
 import { LANGUAGE_LABELS }        from '@/features/editor/languageMap'
 
 interface Props {
@@ -21,8 +21,7 @@ export default function RunPanel({ yTerminal, language, code, userName = 'You', 
   const [showStdin, setShowStdin] = useState(false)
   const bottomRef           = useRef<HTMLDivElement>(null)
 
-  const runtime      = getPistonRuntime(language)
-  const isConfigured = isExecutionConfigured()
+  const runtime = getPistonRuntime(language)
 
   // Subscribe to shared Y.Array — all peers see the same output
   useEffect(() => {
@@ -63,13 +62,6 @@ export default function RunPanel({ yTerminal, language, code, userName = 'You', 
           </span>
         )}
 
-        {/* Not configured warning */}
-        {!isConfigured && (
-          <span className="badge badge-yellow" style={{ fontSize: 10 }}>
-            Add VITE_JUDGE0_KEY to .env
-          </span>
-        )}
-
         <div style={{ flex: 1 }} />
 
         <button
@@ -87,7 +79,7 @@ export default function RunPanel({ yTerminal, language, code, userName = 'You', 
         <button
           className={`btn btn-sm ${running ? 'btn-secondary' : 'btn-primary'}`}
           onClick={onRun}
-          disabled={running || !runtime || !isConfigured}
+          disabled={running || !runtime}
           id="run-in-panel-btn"
         >
           {running
@@ -119,10 +111,8 @@ export default function RunPanel({ yTerminal, language, code, userName = 'You', 
       <div className="terminal-output">
         {lines.length === 0 && (
           <div style={{ color: 'var(--text-faint)', fontSize: 12 }}>
-            {!isConfigured
-              ? <>Add <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--yellow)' }}>VITE_JUDGE0_KEY</code> to your .env — get a free key at <strong>rapidapi.com → Judge0 CE</strong></>            
-              : !runtime
-              ? `${LANGUAGE_LABELS[language] ?? language} can't be executed — try Python, JavaScript, Java, C++, Go, Rust, and more.`
+            {!runtime
+              ? `${LANGUAGE_LABELS[language] ?? language} can't be executed — try Python, JavaScript, TypeScript, Java, C++, Go, Rust, Ruby, Swift, PHP, Scala, and more.`
               : 'Click ▶ Run to execute. Output is shared with all collaborators in real time.'
             }
           </div>

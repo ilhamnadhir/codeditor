@@ -67,15 +67,14 @@ export const LANGUAGE_LABELS: Record<string, string> = {
 }
 
 /**
- * Whether a Monaco language ID can be executed via Piston.
- * Import from piston.ts for the actual runtime config.
+ * Whether a Monaco language ID can be executed via Wandbox.
  */
 export function canExecute(monacoLanguage: string): boolean {
   const executables = new Set([
     'javascript', 'typescript', 'javascriptreact', 'typescriptreact',
-    'python', 'java', 'cpp', 'c', 'csharp', 'go', 'rust',
-    'ruby', 'kotlin', 'swift', 'php', 'scala', 'shell', 'bash',
-    'r', 'lua', 'perl', 'dart', 'clojure', 'coffeescript', 'pascal',
+    'python', 'java', 'cpp', 'c', 'go', 'rust',
+    'ruby', 'swift', 'php', 'bash', 'shell',
+    'lua', 'haskell', 'elixir', 'erlang', 'clojure', 'perl', 'scala',
   ])
   return executables.has(monacoLanguage)
 }

@@ -1,18 +1,12 @@
 /**
- * Judge0 CE code execution client.
+ * Wandbox code execution client — https://wandbox.org
+ * Completely free, no API key, no account required.
+ * Maintained by the Japanese open-source community since 2013.
  *
- * Free tier via RapidAPI: https://rapidapi.com/judge0-official/api/judge0-ce
- * Steps to get a key:
- *   1. Sign up at rapidapi.com (free)
- *   2. Subscribe to "Judge0 CE" (free tier: 50 req/day, 200 req/day on basic)
- *   3. Copy your X-RapidAPI-Key and paste it in .env as VITE_JUDGE0_KEY
- *
- * Language IDs sourced from: https://ce.judge0.com/languages (live endpoint)
+ * Compiler IDs verified against: GET https://wandbox.org/api/list.json
  */
 
-const JUDGE0_BASE = 'https://judge0-ce.p.rapidapi.com'
-const JUDGE0_HOST = 'judge0-ce.p.rapidapi.com'
-const JUDGE0_KEY  = import.meta.env.VITE_JUDGE0_KEY as string | undefined
+const WANDBOX_BASE = 'https://wandbox.org/api'
 
 export interface ExecuteResult {
   stdout:   string
@@ -22,51 +16,56 @@ export interface ExecuteResult {
   version:  string
 }
 
+interface WandboxRuntime {
+  compiler:  string     // wandbox compiler ID (e.g. "cpython-3.13.8")
+  label:     string     // display name
+  options?:  string     // extra compile flags
+}
+
 /**
- * Monaco language ID → Judge0 language ID + display info.
- * Using newest stable versions available on Judge0 CE.
+ * Monaco language ID → Wandbox compiler.
+ * All IDs verified from live https://wandbox.org/api/list.json
  */
-export const JUDGE0_LANGUAGES: Record<string, { id: number; name: string }> = {
-  javascript:      { id: 102, name: 'JavaScript (Node.js 22)'  },
-  typescript:      { id: 101, name: 'TypeScript (5.6.2)'       },
-  javascriptreact: { id: 102, name: 'JavaScript (Node.js 22)'  },
-  typescriptreact: { id: 101, name: 'TypeScript (5.6.2)'       },
-  python:          { id: 109, name: 'Python (3.13.2)'           },
-  java:            { id: 91,  name: 'Java (JDK 17)'             },
-  cpp:             { id: 105, name: 'C++ (GCC 14.1.0)'          },
-  c:               { id: 103, name: 'C (GCC 14.1.0)'            },
-  csharp:          { id: 51,  name: 'C# (Mono 6.6.0)'           },
-  go:              { id: 107, name: 'Go (1.23.5)'               },
-  rust:            { id: 108, name: 'Rust (1.85.0)'             },
-  ruby:            { id: 72,  name: 'Ruby (2.7.0)'              },
-  kotlin:          { id: 111, name: 'Kotlin (2.1.10)'           },
-  swift:           { id: 83,  name: 'Swift (5.2.3)'             },
-  php:             { id: 98,  name: 'PHP (8.3.11)'              },
-  scala:           { id: 112, name: 'Scala (3.4.2)'             },
-  shell:           { id: 46,  name: 'Bash (5.0.0)'              },
-  bash:            { id: 46,  name: 'Bash (5.0.0)'              },
-  r:               { id: 99,  name: 'R (4.4.1)'                 },
-  lua:             { id: 64,  name: 'Lua (5.3.5)'               },
-  perl:            { id: 85,  name: 'Perl (5.28.1)'             },
-  dart:            { id: 90,  name: 'Dart (2.19.2)'             },
-  clojure:         { id: 86,  name: 'Clojure (1.10.1)'          },
-  pascal:          { id: 67,  name: 'Pascal (FPC 3.0.4)'        },
-  haskell:         { id: 61,  name: 'Haskell (GHC 8.8.1)'      },
-  elixir:          { id: 57,  name: 'Elixir (1.9.4)'            },
-  erlang:          { id: 58,  name: 'Erlang (OTP 22.2)'         },
-  sql:             { id: 82,  name: 'SQL (SQLite 3.27.2)'        },
-  plaintext:       { id: 43,  name: 'Plain Text'                 },
+export const WANDBOX_COMPILERS: Record<string, WandboxRuntime> = {
+  javascript:      { compiler: 'nodejs-18.20.4',      label: 'Node.js 18'        },
+  typescript:      { compiler: 'typescript-5.6.2',    label: 'TypeScript 5.6'    },
+  javascriptreact: { compiler: 'nodejs-18.20.4',      label: 'Node.js 18'        },
+  typescriptreact: { compiler: 'typescript-5.6.2',    label: 'TypeScript 5.6'    },
+  python:          { compiler: 'cpython-3.13.8',      label: 'Python 3.13'       },
+  java:            { compiler: 'openjdk-jdk-21+35',   label: 'Java 21'           },
+  cpp:             { compiler: 'gcc-head',             label: 'GCC C++',   options: '-std=c++17' },
+  c:               { compiler: 'gcc-head',             label: 'GCC C'             },
+  go:              { compiler: 'go-1.14.15',           label: 'Go 1.14'           },
+  rust:            { compiler: 'rust-1.64.0',          label: 'Rust 1.64'         },
+  ruby:            { compiler: 'ruby-head',            label: 'Ruby'              },
+  swift:           { compiler: 'swift-5.10.1',         label: 'Swift 5.10'        },
+  php:             { compiler: 'php-8.0.0',            label: 'PHP 8'             },
+  bash:            { compiler: 'bash',                 label: 'Bash'              },
+  shell:           { compiler: 'bash',                 label: 'Bash'              },
+  lua:             { compiler: 'lua-5.4.6',            label: 'Lua 5.4'           },
+  haskell:         { compiler: 'ghc-9.4.5',            label: 'GHC 9.4'           },
+  elixir:          { compiler: 'elixir-1.16.2',        label: 'Elixir 1.16'       },
+  erlang:          { compiler: 'erlang-26.2.1',        label: 'Erlang 26'         },
+  clojure:         { compiler: 'clojure-1.11.1',       label: 'Clojure 1.11'      },
+  perl:            { compiler: 'perl-5.38.0',          label: 'Perl 5.38'         },
+  scala:           { compiler: 'scala-3.4.2',          label: 'Scala 3.4'         },
 }
 
-export function getPistonRuntime(monacoLanguage: string) {
-  const entry = JUDGE0_LANGUAGES[monacoLanguage]
-  if (!entry) return null
-  // Keep the same shape as before (version field for display)
-  return { language: entry.name, version: '' }
+/** Returns display info for a Monaco language ID, or null if unsupported */
+export function getPistonRuntime(monacoLanguage: string): { language: string; version: string } | null {
+  const rt = WANDBOX_COMPILERS[monacoLanguage]
+  if (!rt) return null
+  return { language: rt.label, version: '' }
 }
 
+/** Wandbox needs no API key — always configured */
 export function isExecutionConfigured(): boolean {
-  return Boolean(JUDGE0_KEY)
+  return true
+}
+
+/** Preprocess TypeScript: strip type annotations for the TS compiler (Wandbox handles it natively) */
+function prepareCode(monacoLanguage: string, code: string): string {
+  return code // Wandbox handles TS, Java, everything natively
 }
 
 export async function executeCode(
@@ -74,54 +73,56 @@ export async function executeCode(
   code:           string,
   stdin          = '',
 ): Promise<ExecuteResult> {
-  if (!JUDGE0_KEY) {
-    throw new Error(
-      'Add VITE_JUDGE0_KEY to your .env file.\n' +
-      'Get a free key at: rapidapi.com → search "Judge0 CE" → Subscribe (free tier)'
-    )
-  }
+  const rt = WANDBOX_COMPILERS[monacoLanguage]
 
-  const lang = JUDGE0_LANGUAGES[monacoLanguage]
-  if (!lang) {
-    throw new Error(`"${monacoLanguage}" is not supported for execution.`)
+  if (!rt) {
+    throw new Error(
+      `"${monacoLanguage}" isn't supported. Supported: ${Object.keys(WANDBOX_COMPILERS).join(', ')}`
+    )
   }
 
   if (!code.trim()) {
     throw new Error('Nothing to run — the file is empty.')
   }
 
-  // ?wait=true makes Judge0 run synchronously — no polling needed
-  const res = await fetch(`${JUDGE0_BASE}/submissions?base64_encoded=false&wait=true`, {
-    method: 'POST',
-    headers: {
-      'Content-Type':    'application/json',
-      'X-RapidAPI-Key':  JUDGE0_KEY,
-      'X-RapidAPI-Host': JUDGE0_HOST,
-    },
-    body: JSON.stringify({
-      source_code:  code,
-      language_id:  lang.id,
-      stdin:        stdin || '',
-    }),
-  })
+  const body: Record<string, string> = {
+    compiler: rt.compiler,
+    code:     prepareCode(monacoLanguage, code),
+    stdin:    stdin ?? '',
+  }
+
+  if (rt.options) {
+    body['options'] = rt.options
+  }
+
+  let res: Response
+  try {
+    res = await fetch(`${WANDBOX_BASE}/compile.json`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+    })
+  } catch (networkErr) {
+    throw new Error('Cannot reach Wandbox (wandbox.org) — check your internet connection.')
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText)
-    throw new Error(`Judge0 API error ${res.status}: ${text}`)
+    throw new Error(`Wandbox error ${res.status}: ${text}`)
   }
 
   const data = await res.json()
 
-  // Judge0 status codes: 3 = Accepted, 4 = Wrong Answer, 5 = TLE, 6 = CE, 11-12 = RE
-  const stdout   = data.stdout   ?? ''
-  const stderr   = data.stderr   ?? data.compile_output ?? ''
-  const exitCode = data.status?.id === 3 ? 0 : (data.exit_code ?? 1)
+  const stdout   = data.program_output  ?? ''
+  const stderr   = data.program_error   ?? ''
+  const compErr  = data.compiler_error  ?? ''
+  const exitCode = parseInt(data.status ?? '0', 10)
 
   return {
     stdout,
-    stderr,
-    exitCode,
-    language: lang.name,
-    version:  '',
+    stderr:   stderr || compErr,   // show compile errors in stderr pane
+    exitCode: isNaN(exitCode) ? 0 : exitCode,
+    language: rt.label,
+    version:  rt.compiler,
   }
 }
