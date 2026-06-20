@@ -12,9 +12,9 @@ interface Props {
     activeUsers: number;
     editCount: number;
     latencyMs: number | null;
-    aiOpen: boolean;
-    runOpen: boolean;
-    onToggleAI: () => void;
+    versionsOpen?: boolean;
+    runOpen?: boolean;
+    onToggleVersions?: () => void;
     onToggleRun: () => void;
     onRun: () => void;
     running: boolean;
@@ -22,7 +22,7 @@ interface Props {
     theme: 'dark' | 'light';
     onToggleTheme: () => void;
 }
-export default function Topbar({ roomId, roomName, collaborators, activeUsers, editCount, latencyMs, aiOpen, runOpen, onToggleAI, onToggleRun, onRun, running, canRun, theme, onToggleTheme, }: Props) {
+export default function Topbar({ roomId, roomName, collaborators, activeUsers, editCount, latencyMs, versionsOpen, runOpen, onToggleVersions, onToggleRun, onRun, running, canRun, theme, onToggleTheme, }: Props) {
     const { user, displayName, avatarUrl, signOut, isConfigured } = useAuth();
     const [copied, setCopied] = React.useState(false);
     const handleShare = async () => {
@@ -71,13 +71,14 @@ export default function Topbar({ roomId, roomName, collaborators, activeUsers, e
         </button>
 
 
-        <button className={`btn btn-icon btn-sm ${aiOpen ? 'btn-primary' : 'btn-ghost'}`} onClick={onToggleAI} id="toggle-ai-btn" title="AI Assistant">
-          ✦
-        </button>
+        {/* AI removed */}
 
 
         <button className={`btn btn-icon btn-sm ${runOpen ? 'btn-primary' : 'btn-ghost'}`} onClick={onToggleRun} id="toggle-terminal-btn" title="Toggle terminal">
           ⊞
+        </button>
+        <button className={`btn btn-icon btn-sm ${versionsOpen ? 'btn-primary' : 'btn-ghost'}`} onClick={onToggleVersions} id="toggle-versions-btn" title="History panel">
+          ⬜
         </button>
 
 

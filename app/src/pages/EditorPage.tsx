@@ -13,10 +13,9 @@ import Topbar from '@/components/layout/Topbar';
 import FileExplorer from '@/features/files/FileExplorer';
 import EditorTabs from '@/features/editor/EditorTabs';
 import MonacoWrapper from '@/features/editor/MonacoWrapper';
-import AIPanel from '@/features/ai/AIPanel';
 import RunPanel from '@/features/runner/RunPanel';
 import VersionPanel from '@/features/versions/VersionPanel';
-type PanelTab = 'ai' | 'versions';
+// AI removed; only versions panel supported
 export default function EditorPage() {
     const { roomId } = useParams<{
         roomId: string;
@@ -24,9 +23,8 @@ export default function EditorPage() {
     const { user, displayName, avatarUrl } = useAuth();
     const [roomDoc, setRoomDoc] = useState<RoomDoc | null>(null);
     const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('cs_theme') as 'dark' | 'light') ?? 'dark');
-    const [aiOpen, setAiOpen] = useState(false);
+    const [versionsOpen, setVersionsOpen] = useState(false);
     const [runOpen, setRunOpen] = useState(false);
-    const [panelTab, setPanelTab] = useState<PanelTab>('ai');
     const [currentCode, setCurrentCode] = useState('');
     const runTriggerRef = useRef<(() => void) | null>(null);
     useEffect(() => {
@@ -73,11 +71,7 @@ export default function EditorPage() {
     if (!roomId)
         return null;
     return (<div className="app-shell">
-      <Topbar roomId={roomId} roomName={roomId} collaborators={collaborators} activeUsers={metrics.activeUsers} editCount={metrics.editCount} latencyMs={metrics.latencyMs} aiOpen={aiOpen} runOpen={runOpen} onToggleAI={() => {
-            setAiOpen(o => !o);
-            if (!aiOpen)
-                setPanelTab('ai');
-        }} onToggleRun={() => setRunOpen(o => !o)} onRun={handleRun} running={running} canRun={canExecute(activeLanguage)} theme={theme} onToggleTheme={toggleTheme}/>
+        <Topbar roomId={roomId} roomName={roomId} collaborators={collaborators} activeUsers={metrics.activeUsers} editCount={metrics.editCount} latencyMs={metrics.latencyMs} versionsOpen={versionsOpen} onToggleVersions={() => setVersionsOpen(o => !o)} onToggleRun={() => setRunOpen(o => !o)} onRun={handleRun} running={running} canRun={canExecute(activeLanguage)} theme={theme} onToggleTheme={toggleTheme}/>
 
       <div className="app-shell-body">
 
@@ -97,17 +91,14 @@ export default function EditorPage() {
         </div>
 
 
-        {aiOpen && (<div className="panel-right">
-            <div className="panel-header">
-              <button className={`panel-tab ${panelTab === 'ai' ? 'active' : ''}`} onClick={() => setPanelTab('ai')}>✦ AI</button>
-              <button className={`panel-tab ${panelTab === 'versions' ? 'active' : ''}`} onClick={() => setPanelTab('versions')}>⬜ History</button>
-              <div style={{ flex: 1 }}/>
-              <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setAiOpen(false)}>✕</button>
-            </div>
-
-            {panelTab === 'ai' && (<AIPanel activeCode={currentCode} activeFile={activeFile} files={files} yFiles={roomDoc?.files ?? null}/>)}
-            {panelTab === 'versions' && (<VersionPanel roomId={roomId} activeFile={activeFile} yText={activeYText} currentContent={currentCode} userId={user?.id}/>)}
-          </div>)}
+                {versionsOpen && (<div className="panel-right">
+                        <div className="panel-header">
+                            <div style={{ fontWeight: 600, fontSize: 13, paddingLeft: 6 }}>History</div>
+                            <div style={{ flex: 1 }}/>
+                            <button className="btn btn-ghost btn-sm btn-icon" onClick={() => setVersionsOpen(false)}>✕</button>
+                        </div>
+                        <VersionPanel roomId={roomId} activeFile={activeFile} yText={activeYText} currentContent={currentCode} userId={user?.id}/>
+                    </div>)}
       </div>
 
 

@@ -61,7 +61,7 @@ export function usePresence(provider: WebrtcProvider | null, localUser: Awarenes
                 result.push({
                     clientId,
                     name: (state.user as AwarenessUser).name ?? 'Anonymous',
-                    color: (state.user as AwarenessUser).color ?? '#6366f1',
+                    color: (state.user as AwarenessUser).color ?? '#4b4b4b',
                     avatarUrl: (state.user as AwarenessUser).avatarUrl,
                     cursor: state.cursor ?? null,
                     selection: state.selection ?? null,
