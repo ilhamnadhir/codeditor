@@ -45,11 +45,14 @@ export class SupabaseProvider {
     doc: Y.Doc;
     roomId: string;
     channel: RealtimeChannel;
-    awareness: any;
-    private localClientId: string;
     private trackTimeout: any;
-    private sendTimeout: any;
+    private updateBuffer: Uint8Array[] = [];
+    private syncInterval: any;
     private isJoined: boolean = false;
+    
+    // Bulletproof queue variables
+    private isSending: boolean = false;
+    private sendQueue: (() => Promise<void>)[] = [];
 
     constructor(roomId: string, doc: Y.Doc) {
         this.doc = doc;
@@ -82,11 +85,14 @@ export class SupabaseProvider {
             }
         });
 
-        // 1. Listen for doc updates and broadcast them
+        // 1. Listen for doc updates and buffer them
         doc.on('update', this.onDocUpdate);
 
-        // 2. Listen for remote full-state updates
-        this.channel.on('broadcast', { event: 'full-update' }, this.onRemoteFullUpdate);
+        // 2. Listen for remote updates
+        this.channel
+            .on('broadcast', { event: 'update' }, this.onRemoteUpdate)
+            .on('broadcast', { event: 'sync-step-1' }, this.onSyncStep1)
+            .on('broadcast', { event: 'sync-step-2' }, this.onRemoteUpdate);
 
         // 3. Listen for presence (awareness/cursors)
         this.channel
@@ -97,46 +103,109 @@ export class SupabaseProvider {
         this.channel.subscribe(async (status) => {
             if (status === 'SUBSCRIBED') {
                 this.isJoined = true;
-                // Track our initial presence
-                this.channel.track({ user: this.localState, clientID: this.doc.clientID });
-
-                // Send initial full state
-                const fullUpdate = Y.encodeStateAsUpdate(this.doc);
-                this.channel.send({
-                    type: 'broadcast',
-                    event: 'full-update',
-                    payload: { data: Array.from(fullUpdate) }
+                this.enqueueSend(async () => {
+                    this.channel.track({ user: this.localState, clientID: this.doc.clientID });
                 });
+
+                // Initial sync
+                this.enqueueSend(async () => {
+                    const sv = Y.encodeStateVector(this.doc);
+                    this.channel.send({
+                        type: 'broadcast',
+                        event: 'sync-step-1',
+                        payload: { data: uint8ArrayToBase64(sv) }
+                    });
+                });
+
+                // Self-healing heartbeat every 5 seconds
+                this.syncInterval = setInterval(() => {
+                    if (this.isJoined) {
+                        this.enqueueSend(async () => {
+                            const sv = Y.encodeStateVector(this.doc);
+                            this.channel.send({
+                                type: 'broadcast',
+                                event: 'sync-step-1',
+                                payload: { data: uint8ArrayToBase64(sv) }
+                            });
+                        });
+                    }
+                }, 5000);
             }
         });
     }
 
-    private onDocUpdate = (_update: Uint8Array, origin: any) => {
+    private enqueueSend(task: () => Promise<void>) {
+        this.sendQueue.push(task);
+        this.processQueue();
+    }
+
+    private async processQueue() {
+        if (this.isSending || this.sendQueue.length === 0 || !this.isJoined) return;
+        this.isSending = true;
+
+        while (this.sendQueue.length > 0 && this.isJoined) {
+            const task = this.sendQueue.shift();
+            if (task) {
+                try {
+                    await task();
+                } catch (e) {
+                    console.error('Send error:', e);
+                }
+            }
+            // Strict 200ms delay guarantees max 5 messages/sec (well below Supabase 10/sec limit)
+            await new Promise(resolve => setTimeout(resolve, 200));
+        }
+
+        this.isSending = false;
+    }
+
+    private onDocUpdate = (update: Uint8Array, origin: any) => {
         if (origin !== this && origin !== 'db-load') {
-            if (!this.sendTimeout) {
-                this.sendTimeout = setTimeout(() => {
-                    if (this.isJoined) {
-                        // Send the FULL state to guarantee self-healing on every keystroke batch
-                        const fullUpdate = Y.encodeStateAsUpdate(this.doc);
-                        this.channel.send({
-                            type: 'broadcast',
-                            event: 'full-update',
-                            payload: { data: Array.from(fullUpdate) }
-                        }).catch(() => {});
-                    }
-                    this.sendTimeout = null;
-                }, 300); // 300ms throttle
+            this.updateBuffer.push(update);
+            
+            // If this is the only item in the buffer, schedule a flush
+            if (this.updateBuffer.length === 1) {
+                this.enqueueSend(async () => {
+                    if (this.updateBuffer.length === 0) return;
+                    const merged = Y.mergeUpdates(this.updateBuffer);
+                    this.updateBuffer = [];
+                    this.channel.send({
+                        type: 'broadcast',
+                        event: 'update',
+                        payload: { data: uint8ArrayToBase64(merged) }
+                    });
+                });
             }
         }
     };
 
-    private onRemoteFullUpdate = ({ payload }: any) => {
+    private onRemoteUpdate = ({ payload }: any) => {
         if (!payload || !payload.data) return;
         try {
-            const update = new Uint8Array(payload.data);
+            const update = base64ToUint8Array(payload.data);
             Y.applyUpdate(this.doc, update, this);
         } catch (e) {
-            console.error('Failed to apply remote full update', e);
+            console.error('Failed to apply remote update', e);
+        }
+    };
+
+    private onSyncStep1 = ({ payload }: any) => {
+        if (!payload || !payload.data) return;
+        try {
+            const remoteStateVector = base64ToUint8Array(payload.data);
+            const update = Y.encodeStateAsUpdate(this.doc, remoteStateVector);
+            // Yjs empty update is 2 bytes. Only reply if we have missing data.
+            if (update.length > 2 && this.isJoined) {
+                this.enqueueSend(async () => {
+                    this.channel.send({
+                        type: 'broadcast',
+                        event: 'sync-step-2',
+                        payload: { data: uint8ArrayToBase64(update) }
+                    });
+                });
+            }
+        } catch (e) {
+            console.error('Failed to process sync-step-1', e);
         }
     };
 
@@ -148,14 +217,15 @@ export class SupabaseProvider {
     private setAwarenessState(state: any) {
         this.localState = state;
         if (this.isJoined) {
-            // Throttle track calls to avoid Supabase rate limits (10/sec)
             if (!this.trackTimeout) {
                 this.trackTimeout = setTimeout(() => {
                     if (this.isJoined) {
-                        this.channel.track({ user: this.localState, clientID: this.doc.clientID });
+                        this.enqueueSend(async () => {
+                            this.channel.track({ user: this.localState, clientID: this.doc.clientID });
+                        });
                     }
                     this.trackTimeout = null;
-                }, 300); // Increased presence throttle to 300ms
+                }, 300);
             }
         }
         this.emitAwareness('update', { added: [], updated: [this.doc.clientID], removed: [] });
@@ -210,6 +280,7 @@ export class SupabaseProvider {
     }
 
     destroy() {
+        if (this.syncInterval) clearInterval(this.syncInterval);
         this.doc.off('update', this.onDocUpdate);
         supabase.removeChannel(this.channel);
     }
