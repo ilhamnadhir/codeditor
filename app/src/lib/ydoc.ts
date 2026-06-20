@@ -224,6 +224,8 @@ export function createRoomDoc(roomId: string): RoomDoc {
             // If the update came from a remote peer, that peer will handle the auto-save.
             // This prevents all N connected peers from saving the exact same keystroke N times.
             if (provider && origin === provider) return;
+            // Ignore updates that come from loading the initial database snapshot
+            if (origin === 'db-load') return;
 
             clearTimeout(timeout);
             timeout = setTimeout(async () => {
@@ -239,7 +241,7 @@ export function createRoomDoc(roomId: string): RoomDoc {
                     author: 'system'
                 });
                 if (error) console.error('Supabase Auto-save Error:', error);
-            }, 5000); // Save after 5 seconds of inactivity
+            }, 500); // Save after 500ms of inactivity
         });
 
         // Fetch initial state
@@ -261,7 +263,7 @@ export function createRoomDoc(roomId: string): RoomDoc {
                     if (snap.content) {
                         try {
                             const updateBytes = base64ToUint8Array(snap.content);
-                            Y.applyUpdate(doc, updateBytes);
+                            Y.applyUpdate(doc, updateBytes, 'db-load');
                         } catch (e) {
                             console.error('Failed to restore Yjs state from DB', e);
                         }
