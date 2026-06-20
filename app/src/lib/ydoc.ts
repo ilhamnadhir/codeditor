@@ -47,6 +47,9 @@ export class SupabaseProvider {
     channel: RealtimeChannel;
     awareness: any;
     private localClientId: string;
+    private trackTimeout: any;
+    private updateBuffer: Uint8Array[] = [];
+    private sendTimeout: any;
 
     constructor(roomId: string, doc: Y.Doc) {
         this.doc = doc;
@@ -105,18 +108,28 @@ export class SupabaseProvider {
                 });
                 
                 // Track our initial presence
-                this.channel.track({ user: this.localState });
+                this.channel.track({ user: this.localState, clientID: this.doc.clientID });
             }
         });
     }
 
     private onDocUpdate = (update: Uint8Array, origin: any) => {
-        if (origin !== this) {
-            this.channel.send({
-                type: 'broadcast',
-                event: 'update',
-                payload: Array.from(update)
-            });
+        if (origin !== this && origin !== 'db-load') {
+            this.updateBuffer.push(update);
+            if (!this.sendTimeout) {
+                this.sendTimeout = setTimeout(() => {
+                    if (this.updateBuffer.length > 0) {
+                        const merged = Y.mergeUpdates(this.updateBuffer);
+                        this.updateBuffer = [];
+                        this.channel.send({
+                            type: 'broadcast',
+                            event: 'update',
+                            payload: Array.from(merged)
+                        });
+                    }
+                    this.sendTimeout = null;
+                }, 100);
+            }
         }
     };
 
@@ -143,7 +156,13 @@ export class SupabaseProvider {
     private setAwarenessState(state: any) {
         this.localState = state;
         if (this.channel.state === 'joined') {
-            this.channel.track({ user: state, clientID: this.doc.clientID });
+            // Throttle track calls to avoid Supabase rate limits (10/sec)
+            if (!this.trackTimeout) {
+                this.trackTimeout = setTimeout(() => {
+                    this.channel.track({ user: this.localState, clientID: this.doc.clientID });
+                    this.trackTimeout = null;
+                }, 150);
+            }
         }
         this.emitAwareness('update', { added: [], updated: [this.doc.clientID], removed: [] });
     }
