@@ -198,7 +198,7 @@ export class SupabaseProvider {
 
     destroy() {
         this.doc.off('update', this.onDocUpdate);
-        this.channel.unsubscribe();
+        supabase.removeChannel(this.channel);
     }
 }
 
@@ -220,7 +220,11 @@ export function createRoomDoc(roomId: string): RoomDoc {
         
         // Auto-save mechanism: save full Y.Doc state to snapshots table
         let timeout: any;
-        doc.on('update', () => {
+        doc.on('update', (_update, origin) => {
+            // If the update came from a remote peer, that peer will handle the auto-save.
+            // This prevents all N connected peers from saving the exact same keystroke N times.
+            if (provider && origin === provider) return;
+
             clearTimeout(timeout);
             timeout = setTimeout(async () => {
                 const updateBytes = Y.encodeStateAsUpdate(doc);
