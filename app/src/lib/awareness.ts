@@ -4,10 +4,9 @@ export interface AwarenessUser {
     color: string;
     avatarUrl?: string;
 }
-// Use neutral grey shades for collaborator indicators
 export const USER_COLORS = [
-    '#0b0b0b', '#2b2b2b', '#4b4b4b', '#6b6b6b',
-    '#8b8b8b', '#ababab', '#cbcbcb', '#ebebeb',
+    '#6366f1', '#22c55e', '#f59e0b', '#ef4444',
+    '#8b5cf6', '#06b6d4', '#ec4899', '#14b8a6',
 ];
 export function getColorForIndex(index: number): string {
     return USER_COLORS[index % USER_COLORS.length];

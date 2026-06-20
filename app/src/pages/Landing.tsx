@@ -64,7 +64,7 @@ export default function Landing() {
 
         <p className="hero-sub">
           A collaborative development environment with Yjs CRDTs, live cursors,
-          real-time collaboration features, and a shared terminal.
+          AI powered code analysis, and a shared terminal.
         </p>
 
 
